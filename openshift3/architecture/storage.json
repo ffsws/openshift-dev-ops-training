@@ -1,0 +1,10 @@
+{
+  "Zone":"cc-openshift.de",
+   "Counts":{
+     "App": 3
+   },
+   "Types":{
+     "Master":"m5a.xlarge",
+     "App":"m5a.large"
+   }
+ }
