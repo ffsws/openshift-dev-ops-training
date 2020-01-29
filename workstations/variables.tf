@@ -13,5 +13,5 @@ variable "Zone" {
 variable "Count" {
   description = "Nummer der Training Teilnehmer"
   type = string
-  default = "4"
+  default = "7"
 }
