@@ -10,9 +10,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 const BASE = "/architecture/"
+
+func GetStderr(cmd *exec.Cmd) string {
+	if stdErr, ok := cmd.Stderr.(*strings.Builder); ok {
+		return stdErr.String()
+	}
+
+	return ""
+}
 
 func main() {
 	arch := flag.String("arch", "", "Architecture to deploy")
@@ -45,6 +55,7 @@ func main() {
 }
 
 func CreateArchitecture(arch string, count int) {
+	log.Printf("Creating %d of architecture %s", count, arch)
 	pwd, err := os.Getwd()
 	if err != nil {
 		log.Fatalf("error with pwd: %v", err)
@@ -70,33 +81,28 @@ func CreateArchitecture(arch string, count int) {
 		log.Fatalf("error on terraform init: %v", err)
 	}
 
-	runningCommands := make([]*exec.Cmd, 0)
+	var wg sync.WaitGroup
 	for i := 0; i <= count; i++ {
-		log.Printf("Start building #%d\n", i)
-		cmd, err := terraform.Apply(i)
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
 
-		if err != nil {
-			if stdErr, ok := cmd.Stderr.(*strings.Builder); ok {
-				fmt.Print(stdErr.String())
+			start := time.Now()
+			log.Printf("Start creating #%d\n", index)
+			cmd, err := terraform.Apply(index)
+			if err == nil {
+				err = cmd.Wait()
 			}
 
-			log.Fatalf("error running apply: %v", err)
-		}
-
-		runningCommands = append(runningCommands, cmd)
-	}
-
-	for _, cmd := range runningCommands {
-		err = cmd.Wait()
-
-		if err != nil {
-			if stdErr, ok := cmd.Stderr.(*strings.Builder); ok {
-				fmt.Print(stdErr.String())
+			if err != nil {
+				log.Printf("Error while processing #%d\n%s", index, GetStderr(cmd))
+			} else {
+				log.Printf("Finished creation of #%d / Duration: %v", index, time.Now().Sub(start))
 			}
-
-			log.Printf("error running apply: %v\n\n\n", err)
-		}
+		}(i)
 	}
+
+	wg.Wait()
 }
 
 func DeleteArchitectures(arch string) {
@@ -125,7 +131,7 @@ func DeleteArchitectures(arch string) {
 		log.Fatalf("error on terraform init: %v", err)
 	}
 
-	regex := regexp.MustCompile("state-(\\d+)\\.tfstate$")
+	regex := regexp.MustCompile(`state-(\d+)\.tfstate$`)
 	var count int = -1
 	statePath := pwd + BASE + arch + "/states"
 	if states, err := os.Stat(statePath); err != nil || !states.IsDir() {
@@ -133,10 +139,12 @@ func DeleteArchitectures(arch string) {
 	}
 
 	err = filepath.Walk(statePath, func(path string, info os.FileInfo, err error) error {
-		if match := regex.FindString(info.Name()); len(match) > 0 {
-			parsed, err := strconv.Atoi(match)
-			if err != nil {
-				count = max(count, parsed)
+		matches := regex.FindStringSubmatch(info.Name())
+
+		if len(matches) > 1 {
+			parsed, err := strconv.Atoi(matches[1])
+			if err == nil && parsed > count{
+				count = parsed
 			}
 		}
 
@@ -147,38 +155,26 @@ func DeleteArchitectures(arch string) {
 		log.Fatal("cannot determine number of valid states")
 	}
 
-	runningCommands := make([]*exec.Cmd, 0)
+	var wg sync.WaitGroup
 	for i := 0; i <= count; i++ {
-		log.Printf("Start destroying #%d\n", i)
-		cmd, err := terraform.Destroy(i)
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			start := time.Now()
 
-		if err != nil {
-			if stdErr, ok := cmd.Stderr.(*strings.Builder); ok {
-				fmt.Print(stdErr.String())
+			log.Printf("Start destroying #%d\n", index)
+			cmd, err := terraform.Destroy(index)
+			if err == nil {
+				err = cmd.Wait()
 			}
 
-			log.Fatalf("error running apply: %v", err)
-		}
-
-		runningCommands = append(runningCommands, cmd)
-	}
-
-	for i, cmd := range runningCommands {
-		err = cmd.Wait()
-
-		if err != nil {
-			if stdErr, ok := cmd.Stderr.(*strings.Builder); ok {
-				fmt.Print(stdErr.String())
+			if err != nil {
+				log.Printf("Error while processing #%d\n%s", index, GetStderr(cmd))
+			} else {
+				log.Printf("Finished destruction of #%d / Duration: %v", index, time.Now().Sub(start))
 			}
-
-			log.Printf("error running destroy (%d): %v\n\n\n", i, err)
-		}
+		}(i)
 	}
-}
 
-func max(a int, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	wg.Wait()
 }
