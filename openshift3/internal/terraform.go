@@ -1,4 +1,4 @@
-package main
+package internal
 
 import (
 	"fmt"
@@ -71,4 +71,12 @@ func (terraform *Terraform) Destroy(index int) (*exec.Cmd, error) {
 	command.Dir = terraform.workdir
 
 	return command, command.Start()
+}
+
+func GetStderr(cmd *exec.Cmd) string {
+	if stdErr, ok := cmd.Stderr.(*strings.Builder); ok {
+		return stdErr.String()
+	}
+
+	return ""
 }
